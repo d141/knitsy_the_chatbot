@@ -80,12 +80,13 @@ for dirname, dirs, files in os.walk(folder):
         #print(dirname,count)
         with open(dirname+'/'+filename) as json_file:
           data = json.load(json_file)
+          data['messages']['message_id'] = count
       if count>24:
         break
     if count>24:
       break
 
-data['messages'][0]
+len(data['messages'])
 
 import pandas as pd
 
@@ -98,11 +99,40 @@ for message in data['messages']:
 
 print(df.sample())
 
+# Test run with assigning conversation and message ID numbers
+
+conversation_count = 0
+
+df = pd.DataFrame()
+
+for dirname, dirs, files in tqdm(os.walk(folder)):
+    for filename in files:
+      filename_without_extension, extension = os.path.splitext(filename)
+      if extension == '.json':
+        with open(dirname+'/'+filename) as json_file:
+          conversation_count += 1
+          data = json.load(json_file)
+          message_count = 0
+          for message in data['messages']:
+            message_count += 1
+            m = pd.DataFrame.from_dict(message, orient='index')
+            m = m.T
+            m['conversation_id'] = conversation_count
+            m['message_id'] = message_count
+            df = df.append(m)
+      if conversation_count > 5:
+        break
+    if conversation_count>5:
+      break
+
+df.head()
+
 """### Combine all messages into one dataframe
 
 
 """
 
+#This is now deprecated.
 #1847 Items
 #Run-time between 10 and 18 minutes
 
@@ -377,10 +407,193 @@ df_smalltest['NER'] = df_smalltest['NER doc'].apply(lambda x: [(y.text, y.label_
 
 df_smalltest['NER'].sample().all()
 
+"""## Entire Dataset
+
+### Preprocesser Class and Methods
+"""
+
+import nltk
+from nltk.corpus import stopwords
+from nltk.stem import WordNetLemmatizer
+import spacy
+from spacy import displacy
+from collections import Counter
+import en_core_web_sm
+from nltk.stem import PorterStemmer
+
+nltk.download('punkt')
+nltk.download('stopwords')
+nltk.download('averaged_perceptron_tagger')
+
+
+#Function definitions required for the Preprocesser Class
+
+def encrypt(text,s):
+  result = ""
+    # transverse the plain text
+  for i in range(len(text)):
+    char = text[i]
+    # Encrypt uppercase characters in plain text
+    
+    if (char.isupper()):
+      result += chr((ord(char) + s-65) % 26 + 65)
+    # Encrypt lowercase characters in plain text
+    else:
+      result += chr((ord(char) + s - 97) % 26 + 97)
+  return result
+
+def to_lower(text):
+  str(text)
+  return text.lower()
+
+def custom_stopwords(text):
+    if not text:
+        #print('The text to have stop words removed is a None type or integer. Defaulting to blank string.')
+        text = ''
+    return ' '.join([word for word in text.split() if word not in (stop)])
+
+def custom_tokenize(text):
+    if not text:
+        #print('The text to be tokenized is a None type or integer. Defaulting to blank string.')
+        text = ''
+    return nltk.word_tokenize(text)
+
+#Intialize required objects for the Preprocessor Class
+ps=PorterStemmer()
+nlp = en_core_web_sm.load()
+stop = stopwords.words('english')
+lemmatizer = WordNetLemmatizer()
+
+
+
+class Preprocesser:
+
+  def __init__(self, df):
+    self.df = df
+
+  def clean(self):
+    self.df['timestamp_ms'] = self.df['timestamp_ms'].apply(lambda x : datetime.fromtimestamp(int(x)/1000))
+    self.df['sender_name'] = self.df['sender_name'].apply(lambda x : encrypt(x,16) if x != "Logo Knits" else "Logo Knits")
+    self.df = self.df.fillna("empty")
+
+  
+  def process(self):
+    self.df['content']=self.df['content'].apply(to_lower)
+    self.df['no_stopwords'] = self.df['content'].apply(custom_stopwords)
+    self.df['tokenized_no_stopwords'] = self.df['no_stopwords'].apply(custom_tokenize)
+    self.df['tokenized_raw'] = self.df['content'].apply(custom_tokenize)
+    self.df['stems'] = self.df['tokenized_no_stopwords'].apply(lambda x: [ps.stem(word) for word in x])
+    self.df['lemmatized'] = self.df['tokenized_no_stopwords'].apply(lambda x: [ps.stem(word) for word in x if word.isalpha()])
+    self.df['POS tagged'] = self.df['tokenized_no_stopwords'].apply(lambda x: nltk.pos_tag(x))
+    self.df['NER doc'] = self.df['content'].apply(lambda x: nlp(x))
+    self.df['NER'] = self.df['NER doc'].apply(lambda x: [(y.text, y.label_) for y in x.ents])
+
+  def show_samples(self):
+    print("Content sample:")
+    print(self.df['content'].sample().all())
+    print("")
+    print("No Stopwords sample:")
+    print(self.df['no_stopwords'].sample().all())
+    print("")
+    print("Tokenized No Stopwords sample:")
+    print(self.df['tokenized_no_stopwords'].sample().all())
+    print("")
+    print("Tokenized Raw sample:")
+    print(self.df['tokenized_raw'].sample().all())
+    print("")
+    print("Stems sample:")
+    print(self.df['stems'].sample().all())
+    print("")
+    print("Lemmatized sample:")
+    print(self.df['lemmatized'].sample().all())
+    print("")
+    print("POS Tagged sample:")
+    print(self.df['POS tagged'].sample().all())
+    print("")
+    print("NER Doc sample:")
+    print(self.df['NER doc'].sample().all())
+    print("")
+    print("NER sample:")
+    print(self.df['NER'].sample().all())
+    print("")
+
+"""### Load messages and assign message_id"""
+
+from tqdm import tqdm
+import pandas as pd
+import os
+import json
+
+conversation_count = 0
+
+df = pd.DataFrame()
+
+#1847 Items
+#Run-time between 10 and 18 minutes
+
+for dirname, dirs, files in tqdm(os.walk(folder)):
+    for filename in files:
+      filename_without_extension, extension = os.path.splitext(filename)
+      if extension == '.json':
+        with open(dirname+'/'+filename) as json_file:
+          conversation_count += 1
+          data = json.load(json_file)
+          message_count = 0
+          for message in data['messages']:
+            message_count += 1
+            m = pd.DataFrame.from_dict(message, orient='index')
+            m = m.T
+            m['conversation_id'] = conversation_count
+            m['message_id'] = message_count
+            df = df.append(m)
+
+#checksum message_count
+message_count == 11991
+
+#checksum conversation_count
+conversation_count == 1847
+
+preprocessor = Preprocesser(df)
+preprocessor.clean()
+preprocessor.process()
+
+preprocessor.show_samples()
+
 """# Part 3
 
 ### CountVectorizer
 
-### TfidfTransformer
+apply CountVectorizer from sklearn 
+
+what is your vocabulary size (shape of your matrix)?
+sort and print top 10 frequent words
+"""
+
+from sklearn.feature_extraction.text import CountVectorizer
+import re
+import numpy as np
+
+
+corpus = sum(processed.df['tokenized_no_stopwords'], [])
+
+# get bag of words features in sparse format
+cv = CountVectorizer(min_df=0., max_df=1.)
+cv_matrix = cv.fit_transform(corpus)
+cv_matrix
+
+cv_matrix.shape
+
+counts = pd.DataFrame(cv_matrix.toarray(),
+                      columns=cv.get_feature_names())
+counts
+
+counts.sort_values(by=0, ascending=False).head(20)
+
+"""### TfidfTransformer
+
+what is your vocabulary size (shape of your matrix)?
+
+sort and print top 10 frequent words
+
 """
 
