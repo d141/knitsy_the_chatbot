@@ -293,7 +293,9 @@ top_20 = top_20.drop(labels=[','])
 
 top_20.head(20)
 
-"""### Statistical Analysis
+"""These words are the result that I expected to find. The company is a blanket manufacturer and retailer. So it's expected to find that blanket/s occupy the tp two positions. The rest of the words are generally from customers inquiring about pricing, minimums, or other basic questions.
+
+### Statistical Analysis
 (length of word, length of sentence,  lexical diversity)
 """
 
@@ -374,7 +376,7 @@ df_smalltest['lemmatized'].sample().all()
 
 nltk.download('averaged_perceptron_tagger')
 
-df_smalltest['POS tagged'] = df_smalltest['tokenized_no_stopwords'].apply(lambda x: nltk.pos_tag(x))
+df_smalltest['POS tagged'] = df_smalltest['tokenized_raw'].apply(lambda x: nltk.pos_tag(x))
 
 df_smalltest['POS tagged'].sample().all()
 
@@ -420,6 +422,8 @@ from spacy import displacy
 from collections import Counter
 import en_core_web_sm
 from nltk.stem import PorterStemmer
+from datetime import datetime
+import re
 
 nltk.download('punkt')
 nltk.download('stopwords')
@@ -442,9 +446,12 @@ def encrypt(text,s):
       result += chr((ord(char) + s - 97) % 26 + 97)
   return result
 
-def to_lower(text):
+def strip_and_lower(text):
   str(text)
-  return text.lower()
+  text = re.sub(r'[^a-zA-Z\s]', '', text, re.I|re.A)
+  text = text.lower()
+  text = text.strip()
+  return text
 
 def custom_stopwords(text):
     if not text:
@@ -472,19 +479,20 @@ class Preprocesser:
     self.df = df
 
   def clean(self):
-    self.df['timestamp_ms'] = self.df['timestamp_ms'].apply(lambda x : datetime.fromtimestamp(int(x)/1000))
+    #self.df['timestamp_ms'] = self.df['timestamp_ms'].apply(lambda x : datetime.fromtimestamp(int(str(x))/1000))
     self.df['sender_name'] = self.df['sender_name'].apply(lambda x : encrypt(x,16) if x != "Logo Knits" else "Logo Knits")
     self.df = self.df.fillna("empty")
 
   
   def process(self):
-    self.df['content']=self.df['content'].apply(to_lower)
+    self.df['content_raw'] = self.df['content']
+    self.df['content']=self.df['content'].apply(strip_and_lower)
     self.df['no_stopwords'] = self.df['content'].apply(custom_stopwords)
     self.df['tokenized_no_stopwords'] = self.df['no_stopwords'].apply(custom_tokenize)
-    self.df['tokenized_raw'] = self.df['content'].apply(custom_tokenize)
+    self.df['tokenized_raw'] = self.df['content_raw'].apply(custom_tokenize)
     self.df['stems'] = self.df['tokenized_no_stopwords'].apply(lambda x: [ps.stem(word) for word in x])
     self.df['lemmatized'] = self.df['tokenized_no_stopwords'].apply(lambda x: [ps.stem(word) for word in x if word.isalpha()])
-    self.df['POS tagged'] = self.df['tokenized_no_stopwords'].apply(lambda x: nltk.pos_tag(x))
+    self.df['POS tagged'] = self.df['tokenized_raw'].apply(lambda x: nltk.pos_tag(x))
     self.df['NER doc'] = self.df['content'].apply(lambda x: nlp(x))
     self.df['NER'] = self.df['NER doc'].apply(lambda x: [(y.text, y.label_) for y in x.ents])
 
@@ -529,7 +537,9 @@ conversation_count = 0
 df = pd.DataFrame()
 
 #1847 Items
-#Run-time between 10 and 18 minutes
+#Run-time usually between 10 and 18 minutes
+
+folder = '/content/drive/MyDrive/Colab Notebooks/messages'
 
 for dirname, dirs, files in tqdm(os.walk(folder)):
     for filename in files:
@@ -547,11 +557,8 @@ for dirname, dirs, files in tqdm(os.walk(folder)):
             m['message_id'] = message_count
             df = df.append(m)
 
-#checksum message_count
-message_count == 11991
-
 #checksum conversation_count
-conversation_count == 1847
+conversation_count == 1428
 
 preprocessor = Preprocesser(df)
 preprocessor.clean()
@@ -559,7 +566,9 @@ preprocessor.process()
 
 preprocessor.show_samples()
 
-"""# Part 3
+"""I think that the results here are quite good. I don't expect to find many samples that have more than one or two results in the NER list. The conversations are usually quite casual and I think that if there is a Named Entity, it will most likely be a shipping address or a quantity.
+
+# Part 3
 
 ### CountVectorizer
 
@@ -574,7 +583,7 @@ import re
 import numpy as np
 
 
-corpus = sum(processed.df['tokenized_no_stopwords'], [])
+corpus = sum(preprocessor.df['tokenized_no_stopwords'], [])
 
 # get bag of words features in sparse format
 cv = CountVectorizer(min_df=0., max_df=1.)
@@ -587,13 +596,56 @@ counts = pd.DataFrame(cv_matrix.toarray(),
                       columns=cv.get_feature_names())
 counts
 
-counts.sort_values(by=0, ascending=False).head(20)
+counts['blanket'].sum()
 
-"""### TfidfTransformer
+s = counts.sum()
+
+s.nlargest(n=10)
+
+"""### TfidfTransformer and Vectorizer
 
 what is your vocabulary size (shape of your matrix)?
 
 sort and print top 10 frequent words
 
 """
+
+from sklearn.feature_extraction.text import TfidfVectorizer
+
+tv = TfidfVectorizer(min_df=0., max_df=1., norm='l2',
+                     use_idf=True, smooth_idf=True)
+tv_matrix = tv.fit_transform(corpus)
+tv_matrix = tv_matrix.toarray()
+
+vocab = tv.get_feature_names()
+tfidf = pd.DataFrame(np.round(tv_matrix, 2), columns=vocab)
+
+tfidf.sample(10)
+
+tfidf.shape
+
+tfidf['blankets'].sample(10)
+
+t_s = tfidf.sum()
+t_s.nlargest(n=10)
+
+"""I'm confused by this result. My tfidf dataframe is looks identical to the CountVectorizer dataframe except the numbers are floats instead of integers. I don't think that there are any fractions. ***I tried using both tfidfTransformer and tfidfVectorizer, and the results were the same.***
+Is it possibly because there is so little variation in the topics being discussed?
+The code I used is directly from Ch04a Feature Engineering notebook.
+"""
+
+from sklearn.feature_extraction.text import TfidfTransformer
+
+tt = TfidfTransformer(norm='l2', use_idf=True, smooth_idf=True)
+tt_matrix = tt.fit_transform(cv_matrix.toarray())
+
+tt_matrix = tt_matrix.toarray()
+vocab = cv.get_feature_names()
+tfidf = pd.DataFrame(np.round(tt_matrix, 2), columns=vocab)
+
+t_s = tfidf.sum()
+t_s.nlargest(n=10)
+
+!cp drive/My Drive/Colab Notebooks/Knitsy Bot.ipynb ./
+!jupyter nbconvert --to PDF "Knitsy Bot.ipynb"
 
